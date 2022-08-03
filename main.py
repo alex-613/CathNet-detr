@@ -16,7 +16,7 @@ from datasets import build_dataset, get_coco_api_from_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 
-
+# Arg Parser, not interesting
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     parser.add_argument('--lr', default=1e-4, type=float)
@@ -103,6 +103,8 @@ def get_args_parser():
 
 
 def main(args):
+
+    # Enable distributed training across multiple GPUs, not just one.
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -110,14 +112,16 @@ def main(args):
         assert args.masks, "Frozen training is meant for segmentation only"
     print(args)
 
+    # Feed torch the GPU device
     device = torch.device(args.device)
 
-    # fix the seed for reproducibility
+    # Fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
+    # Build the DETR model
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
