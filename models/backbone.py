@@ -110,6 +110,7 @@ class Joiner(nn.Sequential):
 
 
 def build_backbone(args):
+    # Add positional encoding
     position_embedding = build_position_encoding(args)
     train_backbone = args.lr_backbone > 0
     return_interm_layers = args.masks
