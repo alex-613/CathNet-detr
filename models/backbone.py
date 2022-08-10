@@ -60,12 +60,15 @@ class BackboneBase(nn.Module):
     def __init__(self, backbone: nn.Module, train_backbone: bool, num_channels: int, return_interm_layers: bool):
         super().__init__()
         for name, parameter in backbone.named_parameters():
+        # Freeze some of the parameters, only trainable layers are 2 3 and 4
             if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
                 parameter.requires_grad_(False)
         if return_interm_layers:
             return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
         else:
+            # we extract features from layer 4 and put it into a dictionary under the index of '0'
             return_layers = {'layer4': "0"}
+        # Finally take resnet 50, call intermediate layer getter, which only grabs layer 4 from the intermediate layer getter
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
         self.num_channels = num_channels
 
@@ -86,6 +89,8 @@ class Backbone(BackboneBase):
                  train_backbone: bool,
                  return_interm_layers: bool,
                  dilation: bool):
+        # Backbone is the resnet 50 and grab the class
+        # Grab regular resnet without dilated convolution, which is a fancy way of downsampling, not max pooling
         backbone = getattr(torchvision.models, name)(
             replace_stride_with_dilation=[False, False, dilation],
             pretrained=is_main_process(), norm_layer=FrozenBatchNorm2d)
@@ -112,9 +117,13 @@ class Joiner(nn.Sequential):
 def build_backbone(args):
     # Add positional encoding
     position_embedding = build_position_encoding(args)
+    # If learning rate is greater than 0, make the backbone trainable
     train_backbone = args.lr_backbone > 0
     return_interm_layers = args.masks
+    # Now proceed to making the backbone, you will need to modify this if you would like to conv temporal information too.
     backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
+    # Joiner joins the resnet 50 with the positional encoder
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
     return model
+

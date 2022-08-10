@@ -31,16 +31,24 @@ class DETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
+        # Please note that this is 100
         self.num_queries = num_queries
+        # Store the transformer
         self.transformer = transformer
+        # This is the transformer dimension at the end of the resnet 50
         hidden_dim = transformer.d_model
+        # Map the output decoding vectors to the distribution of classes and BB
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        # Use MLP to mat the output from the decoder output to the bounding boxes
+        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3) # Output 4, 3 layers MLP, with hidden dim as the input and hidden dimension
+        # The query embeddings as an embed table, which you can think of as a trainable bunch of random numbers
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        # 2048 to 256 downsampling via conv 
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
+        # Store backbone and loss
         self.aux_loss = aux_loss
-
+        # The aux loss ensures that you fetch the output of every single decoder layers and compute that
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -320,8 +328,11 @@ def build(args):
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
     num_classes = 20 if args.dataset_file != 'coco' else 91
-    if args.dataset_file == "ultrasound":
+    if args.dataset_file == "catheter":
         num_classes = 2
+
+    if args.dataset_file == "face":
+        num_classes = 1
 
     if args.dataset_file == "coco_panoptic":
         # for panoptic, we just add a num_classes that is large enough to hold
@@ -330,6 +341,7 @@ def build(args):
     device = torch.device(args.device)
 
     # Build the resnet backbone
+    # Checkout how its done in the backbone.py file
     backbone = build_backbone(args)
 
     transformer = build_transformer(args)
@@ -341,24 +353,33 @@ def build(args):
         num_queries=args.num_queries,
         aux_loss=args.aux_loss,
     )
+    # Ignore this bit since it is for panoptic segmentation
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
+        
     matcher = build_matcher(args)
+    # Finding the loss components, the ce loss, bb loss etc
     weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
+    # Panoptic so skip
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
         weight_dict["loss_dice"] = args.dice_loss_coef
     # TODO this is a hack
+    # Auxillary loss: If set to true, must define losses for all of the layers too
+    # So you would have 3 times the number of layers in the decoder
     if args.aux_loss:
         aux_weight_dict = {}
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
+    # Cardinality isnt a loss we will definei it later
     losses = ['labels', 'boxes', 'cardinality']
     if args.masks:
         losses += ["masks"]
+
+    # This defines the loss function, it does the hungarian matching and the loss calculation 
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses)
     criterion.to(device)
