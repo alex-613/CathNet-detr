@@ -73,12 +73,19 @@ class BackboneBase(nn.Module):
         self.num_channels = num_channels
 
     def forward(self, tensor_list: NestedTensor):
+        # Pass tensors through the body, which will just fetch features of layer 4 of resnet 50. xs will have zero key, the 4th layer. With batch, 2048, feature dims.
+        # Basically the extracted features
         xs = self.body(tensor_list.tensors)
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():
+            # Grab the features from xs. Grab the mask
             m = tensor_list.mask
             assert m is not None
+            # Downsample the mask such that it isnt of the same spatial resolution of the original image, but it is of the same spatial res of resnet 50.
+            # Eg the orig m.shape is [2, 608, 911]
+            # the interpolated shape is [2, 19, 29], which is of the same res of output of resnet 50
             mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
+            # Finally, store the image features and masks in a nested vector and return it in the out dictionary
             out[name] = NestedTensor(x, mask)
         return out
 
@@ -103,12 +110,17 @@ class Joiner(nn.Sequential):
         super().__init__(backbone, position_embedding)
 
     def forward(self, tensor_list: NestedTensor):
+        # self[0] is just the backbone ResNet50
+        # self[1] is just the positional embedding with sine
         xs = self[0](tensor_list)
         out: List[NestedTensor] = []
+        # Now we want to calculate the positional embeddings
         pos = []
+        # Grab image features and down samples mask
         for name, x in xs.items():
             out.append(x)
             # position encoding
+            # Give it the x and it does the magic. Treating it as a blackbox for now.
             pos.append(self[1](x).to(x.tensors.dtype))
 
         return out, pos

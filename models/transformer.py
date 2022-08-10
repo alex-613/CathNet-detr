@@ -47,13 +47,23 @@ class Transformer(nn.Module):
     def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
+        # Flatten to the 2nd dimension, and then swap the ordering from 0,1,2 (N,C,HW) to 2,0,1 (HW,N,C)
         src = src.flatten(2).permute(2, 0, 1)
+        # Do the same for the positional embedding
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        # There are [100, 256], add a dim at position 1, and copy past it for however many batches you are dealing with
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        # So at the end that shape would be [100,2,256]
+        # Flatten the mask
         mask = mask.flatten(1)
 
+        # Target are the tokens that are going to be the tokens passed through decoder. Query is the positional encodings.
         tgt = torch.zeros_like(query_embed)
+        # Encoder. The memory has same dimensions as the input, as expected.
+        # the encoder encodes the input image features and then passes it to the multi-headed attention in the decoder as keys and values
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        # Decoder
+        # The decoder takes the target (all zeros), memory (encoder output), mask (which tokens not to attend to when doing cross attention)
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
@@ -73,7 +83,9 @@ class TransformerEncoder(nn.Module):
                 pos: Optional[Tensor] = None):
         output = src
 
+        # Add 6 encoder layers
         for layer in self.layers:
+            # Pass the source here, flattened. Pass the mask, finally the positional encodings
             output = layer(output, src_mask=mask,
                            src_key_padding_mask=src_key_padding_mask, pos=pos)
 
@@ -145,17 +157,23 @@ class TransformerEncoderLayer(nn.Module):
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
-
+    # Post because we got layer norm applied after
     def forward_post(self,
                      src,
                      src_mask: Optional[Tensor] = None,
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
+        # Sum up the positional encodings, sum it up with the image tokens. Get the queries and the keys
         q = k = self.with_pos_embed(src, pos)
+        # Do self attention, without positional encodings, value vectors will not include positional encodings
+        # Recall that the mask is there since some parts of the image is padding and not accessible/
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
+        # Single stack of self attention of image tokens across each other
+
         src = src + self.dropout1(src2)
         src = self.norm1(src)
+        # Inverse bottleneck MLP
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
@@ -216,11 +234,15 @@ class TransformerDecoderLayer(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
+        # Query position positional embeddings, add those to the target (all zeros) to get queries and keys
         q = k = self.with_pos_embed(tgt, query_pos)
+        # Apply self attention
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
                               key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
+        # Apply cross attention
+        # Use the queries using the target and the positional encodings. Use keys and values are the memory vectors
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,

@@ -17,19 +17,28 @@ from datasets.panoptic_eval import PanopticEvaluator
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
+    # Set model and criterion to be trainable
     model.train()
+    # As a reminder, the criterion contains the hungarian matching loss and the loss calculation logic
     criterion.train()
+    #
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
+    # Now we start loading the images
+
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        # Samples are the nested tensors we just saw, a batch of images with 3 channels and w by h pixels
+        # Push images and the annotations to the GPU
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
+        # Forward pass
         outputs = model(samples)
+        # The criterion does the hungarian matching followed by loss calculation
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)

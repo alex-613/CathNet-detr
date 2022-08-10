@@ -13,11 +13,14 @@ from pycocotools import mask as coco_mask
 
 import datasets.transforms as T
 
+# In this file we want to try and create the coco dataset files for DETR
 
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, img_folder, ann_file, transforms, return_masks):
         super(CocoDetection, self).__init__(img_folder, ann_file)
+        # Store the transforms
         self._transforms = transforms
+        # Some other processing
         self.prepare = ConvertCocoPolysToMask(return_masks)
 
     def __getitem__(self, idx):
@@ -113,19 +116,23 @@ class ConvertCocoPolysToMask(object):
 
 
 def make_coco_transforms(image_set):
-
+    # Transform the coco images
     normalize = T.Compose([
         T.ToTensor(),
+        # Normalise based on image net statistics, try to comment this out for training ultrasound
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
     scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
-
+    # For training, we want to do a bunch of stuff to the images
     if image_set == 'train':
         return T.Compose([
+            # Randomly flip the image
             T.RandomHorizontalFlip(),
             T.RandomSelect(
+                # Randomly resizing the image
                 T.RandomResize(scales, max_size=1333),
+                # Randomly cropping and resizing etc
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
@@ -148,6 +155,7 @@ def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
+    # The data is structures with the actual images, and also the .json annotation files
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
         "val": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
@@ -156,3 +164,15 @@ def build(image_set, args):
     img_folder, ann_file = PATHS[image_set]
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set), return_masks=args.masks)
     return dataset
+
+
+# Below is an example of a labelled .json file from the coco dataset, please prepare your dataset in the same manner if you would like to use the DETR as it is without implementing a new dataloader
+
+# First we need to prepare a file that provides the name and the id of the classes that is in the image
+# Then we also need to provide te image information into the mix, this is done by including the image filename, height, width, and id
+
+# Then we will need to provide the annotation: the id of the annotation, the bounding box information in the for mat of xmin,xmax,ymin,ymax
+# Then we provide the image id, the category id, and the area of the bounding box
+
+# The file seems easy to create, but needs a bit of thinking and needs some initial examination of the data when it arrives
+

@@ -17,6 +17,7 @@ def get_coco_api_from_dataset(dataset):
         return dataset.coco
 
 
+# Here we build the coco dataset
 def build_dataset(image_set, args):
     if args.dataset_file == 'coco':
         return build_coco(image_set, args)

@@ -126,13 +126,17 @@ def main(args):
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
+    # variable renaming
     model_without_ddp = model
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
+    # Calculate the number of parameters, if they require grad, then just find the number of points in that particular layer
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
+    print('number of params:', n_parameters) # Roughly 41 million
 
+    # Separates the trainable weights into two groups, one is the backbone and one is not backbone
+    # Have different learning rates for the backbone and different learning rate for the other bits
     param_dicts = [
         {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
@@ -140,23 +144,33 @@ def main(args):
             "lr": args.lr_backbone,
         },
     ]
+    # Define the optimizer which is AdamW, which includes weight decay into the mix
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
+    # Special learning rate scheduler, after 100 epochs, it drops the learning rate by 10x
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+
+    ########## Now we build the coco dataset ##########
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
 
+    # Data loaders
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
     else:
+        # Create some random sampling of the training data
+        # Have some sequential sampling of the validation data
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
+    # Batch two training images during training
     batch_sampler_train = torch.utils.data.BatchSampler(
         sampler_train, args.batch_size, drop_last=True)
 
+    # Create data loaders using training dataset
+    # Collate will be explained later
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                    collate_fn=utils.collate_fn, num_workers=args.num_workers)
     data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
@@ -211,6 +225,7 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
+    # 300 epochs
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)

@@ -52,12 +52,16 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
+        # First, grab the batch size and the number of queries
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
-        # We flatten to compute the cost matrices in a batch
+        # We flatten out the prediction logits to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, num_classes]
+        # Flatten across all batches and queries, compare with ground truth
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
 
+        # Here is the ground truth:
+        # Iterate through the annotations for the ground truth, grab labels
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_bbox = torch.cat([v["boxes"] for v in targets])
@@ -65,9 +69,13 @@ class HungarianMatcher(nn.Module):
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
         # The 1 is a constant that doesn't change the matching, it can be ommitted.
+
+        # For all the boxes we predict for batch, take all the logits (ground truth classes), extract into the cost class matrix.
+        # End up with 2, 100, 16, instead of 2,100,92
         cost_class = -out_prob[:, tgt_ids]
 
-        # Compute the L1 cost between boxes
+        # Compute the L1 cost between boxes.
+        # Contains the distance between each of the 2,100 predictions and each of the 16 ground truth labels.
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
         # Compute the giou cost betwen boxes

@@ -66,14 +66,23 @@ class DETR(nn.Module):
         """
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+        # First step is to take the image samples and pass it through the backbone
+        # Returns the image features, the position vectors and the mask
         features, pos = self.backbone(samples)
-
+        # Decompose the features into source and mask
+        # Source is the image features
+        # mask is the mask
         src, mask = features[-1].decompose()
         assert mask is not None
+        # Take the source, with 2048 features and downsamples image res, after applying input projection, reduce the number of working channels to be 256 (basically apply a conv layer)
+        # Pass the input with 256 dims, the mask , the query weights and the positional encodings
         hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
 
+        # Finally apply class embedding
+        # As well as the bounding box embedded
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
+        # Grab only the output from the last decoder level
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
@@ -104,13 +113,18 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
+
+        # Stores some of the variables here
         self.num_classes = num_classes
+        # Hungarian metric
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses = losses
         empty_weight = torch.ones(self.num_classes + 1)
+        # Put a smaller weight onto the null class since there are alot of them
         empty_weight[-1] = self.eos_coef
+        # This is used to register a buffer than should not be considered to be a part of the model parameters. In this case it is constant.
         self.register_buffer('empty_weight', empty_weight)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
@@ -236,9 +250,11 @@ class SetCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        # Fetch output from the last layer of the decoder, ignore the auxilary matte
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
+        # This is done using the hungarian matching algorithm
         indices = self.matcher(outputs_without_aux, targets)
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
@@ -382,6 +398,7 @@ def build(args):
     # This defines the loss function, it does the hungarian matching and the loss calculation 
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses)
+    # Put the criteria onto the GPU, do some post processing
     criterion.to(device)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
@@ -389,5 +406,5 @@ def build(args):
         if args.dataset_file == "coco_panoptic":
             is_thing_map = {i: i <= 90 for i in range(201)}
             postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
-
+    # Return the model, the criterion and the post processors
     return model, criterion, postprocessors

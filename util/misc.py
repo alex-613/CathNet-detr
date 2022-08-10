@@ -267,7 +267,11 @@ def get_sha():
 
 
 def collate_fn(batch):
+    # Batch is a list of tuples containing image and annotations, instead we want a tuple of images and a tuple of annotations
     batch = list(zip(*batch))
+    # the nested tensor from tensor list, passing in the tensor of images
+    # Please note that we dont want to always resize the images, in this case we actually want to operate on the original image because it is important for us not to lose any information
+
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     return tuple(batch)
 
@@ -281,6 +285,7 @@ def _max_by_axis(the_list):
     return maxes
 
 
+# the nested tensor is a simple object that stores the tensors and the masks
 class NestedTensor(object):
     def __init__(self, tensors, mask: Optional[Tensor]):
         self.tensors = tensors
@@ -305,6 +310,7 @@ class NestedTensor(object):
 
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+    # Images are made with 3 dimensions, the number of channels, and the spatial extent of the image
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
@@ -313,15 +319,25 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
             return _onnx_nested_tensor_from_tensor_list(tensor_list)
 
         # TODO make it support different-sized images
+        # This is done because the images are of different sizes
+        # here, we iterate through all images in the batch, find the maximum convex hull, find biggest box that encompases all the spatial resolution in the image
+        # Aka find max across x and y to get the size of the bounding box
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
+        # Copy over the images to batch shape
         batch_shape = [len(tensor_list)] + max_size
+        # We finally end up with this shape we see over here.
         b, c, h, w = batch_shape
         dtype = tensor_list[0].dtype
         device = tensor_list[0].device
+        # Create the container tensor, initialised with zeros, of size of the largest image in the batch
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
+        # Mask, tells us later on which tokens need to be ignored when passing through the transformers
         mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
+        # Form a mask, tell us which tokens we need to ignore when passing through transformer. Iterate through tensor list, containing all of the images
+        # Since we have differend sized images, some parts of the smaller image will need to be ignored because the bounding box is too large.
         for img, pad_img, m in zip(tensor_list, tensor, mask):
+            # Copy image into the container tensor, take the mask and fill in the false. The parts that are true are the images that are going to be padded. =
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             m[: img.shape[1], :img.shape[2]] = False
     else:
